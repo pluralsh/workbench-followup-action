@@ -1,6 +1,6 @@
 # Plural Workbench Follow-up
 
-A shared GitHub Action that sends a follow-up prompt to the Plural Workbench associated with a merged pull request. It wraps:
+A shared GitHub Action that sends a follow-up prompt to the Plural Workbench associated with a merged pull request after your delivery workflow builds and deploys the change. It wraps:
 
 ```shell
 plural workbenches pr-followup
@@ -10,10 +10,10 @@ Plural is GitOps-based, so the intended workflow runs after the pull request is 
 
 ## Usage
 
-Run the action when a pull request is closed, and guard the job with `github.event.pull_request.merged == true` so it never runs for an open or unmerged pull request. Use `pluralsh/setup-plural` to install the Plural CLI and configure Console authentication before invoking this action:
+A common pattern is to invoke this action after the same workflow builds a Docker image and deploys the application. Run it when a pull request is closed, and guard the job with `github.event.pull_request.merged == true` so it never runs for an open or unmerged pull request. Use `pluralsh/setup-plural` to install the Plural CLI and configure Console authentication before invoking this action:
 
 ```yaml
-name: Verify merged changes
+name: Build, deploy, and verify merged changes
 
 on:
   pull_request:
@@ -24,10 +24,20 @@ permissions:
   id-token: write
 
 jobs:
-  follow-up:
+  deploy-and-follow-up:
     if: github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t ghcr.io/acme/example:${{ github.sha }} .
+          docker push ghcr.io/acme/example:${{ github.sha }}
+
+      - name: Deploy application
+        run: ./scripts/deploy.sh ghcr.io/acme/example:${{ github.sha }}
+
       - name: Set up Plural
         uses: pluralsh/setup-plural@v2
         with:
@@ -35,13 +45,14 @@ jobs:
           email: ${{ vars.PLURAL_CONSOLE_EMAIL }}
           vsn: 0.12.60
 
-      - name: Verify merged changes
+      - name: Verify deployed changes
         id: follow-up
         uses: pluralsh/workbench-followup-action@v1
         with:
           prompt: |
             Pull request #${{ github.event.pull_request.number }} was merged into ${{ github.event.pull_request.base.ref }}.
-            Verify the merged changes against the reconciled system and infrastructure state. Fix any issues you find.
+            The Docker image was built and the application was deployed.
+            Verify the live deployment, confirm the expected change is working, and fix any issues you find.
           url: ${{ github.event.pull_request.html_url }}
           defer: 5m
           skip-missing: true
@@ -51,7 +62,7 @@ jobs:
         run: echo '${{ steps.follow-up.outputs.workbench-job-url }}'
 ```
 
-Adjust `defer` to allow enough time for the GitOps reconciliation to complete before the Workbench starts verification.
+Replace the example build and deploy commands with the steps your delivery pipeline already uses. Adjust `defer` to allow enough time for deployment and GitOps reconciliation to complete before the Workbench starts verification.
 
 ### Authentication
 
