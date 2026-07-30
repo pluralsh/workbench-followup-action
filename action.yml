@@ -64,43 +64,4 @@ runs:
         DEFER: ${{ inputs.defer }}
         OUTPUT: ${{ inputs.output }}
         SKIP_MISSING: ${{ inputs.skip-missing }}
-      run: |
-        set -euo pipefail
-
-        PULL_REQUEST_URL="$INPUT_URL"
-        if [[ -z "$PULL_REQUEST_URL" && -z "$COMMIT" ]]; then
-          PULL_REQUEST_URL="$EVENT_PULL_REQUEST_URL"
-        fi
-
-        [[ -n "${PROMPT//[[:space:]]/}" ]] || { echo "::error::prompt is required" >&2; exit 1; }
-        [[ -n "${PLURAL_CONSOLE_TOKEN:-}" ]] || { echo "::error::PLURAL_CONSOLE_TOKEN is required; run pluralsh/setup-plural first" >&2; exit 1; }
-        [[ -n "${PLURAL_CONSOLE_URL:-}" ]] || { echo "::error::PLURAL_CONSOLE_URL is required; run pluralsh/setup-plural first" >&2; exit 1; }
-        [[ -z "$PULL_REQUEST_URL" || -z "$COMMIT" ]] || { echo "::error::pull-request-url and commit cannot be used together" >&2; exit 1; }
-        [[ "$PROVIDER" == "auto" || "$PROVIDER" == "github" || "$PROVIDER" == "gitlab" || "$PROVIDER" == "bitbucket" ]] || { echo "::error::provider must be auto, github, gitlab, or bitbucket" >&2; exit 1; }
-        [[ "$OUTPUT" == "raw" || "$OUTPUT" == "json" ]] || { echo "::error::output must be raw or json" >&2; exit 1; }
-        [[ "$SKIP_MISSING" == "true" || "$SKIP_MISSING" == "false" ]] || { echo "::error::skip-missing must be true or false" >&2; exit 1; }
-
-        args=(
-          workbenches pr-followup
-          --prompt "$PROMPT"
-          --provider "$PROVIDER"
-          --defer "$DEFER"
-          --output "$OUTPUT"
-        )
-        [[ -n "$PULL_REQUEST_URL" ]] && args+=(--url "$PULL_REQUEST_URL")
-        [[ -n "$COMMIT" ]] && args+=(--commit "$COMMIT")
-        [[ -n "$BASE_URL" ]] && args+=(--base-url "$BASE_URL")
-        [[ "$SKIP_MISSING" == "true" ]] && args+=(--skip-missing)
-
-        if [[ "$OUTPUT" == "raw" ]]; then
-          plural "${args[@]}"
-          exit 0
-        fi
-
-        result="$(plural "${args[@]}")"
-        jq -e 'type == "object"' >/dev/null <<< "$result" || { echo "::error::plural returned an invalid JSON response" >&2; exit 1; }
-
-        echo "prompt-id=$(jq -r '.promptId // empty' <<< "$result")" >> "$GITHUB_OUTPUT"
-        echo "pull-request-url=$(jq -r '.pullRequestUrl // empty' <<< "$result")" >> "$GITHUB_OUTPUT"
-        echo "workbench-job-url=$(jq -r '.workbenchJobUrl // empty' <<< "$result")" >> "$GITHUB_OUTPUT"
-        echo "skipped=$(jq -r '.skipped // false' <<< "$result")" >> "$GITHUB_OUTPUT"
+      run: "$GITHUB_ACTION_PATH/entrypoint.sh"

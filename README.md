@@ -169,6 +169,15 @@ The outputs above are parsed from the CLI's JSON response. With `output: raw`, t
   - Console token: `consoleUrl` and `consoleToken`, typically read from a GitHub Actions variable and secret; no OIDC permission is required.
 - `actions/checkout` with sufficient history before this action when using commit-based pull request inference.
 
+## Logging
+
+The action is designed to keep workflow logs human-readable:
+
+- The composite step runs a checked-in entrypoint script instead of inlining the full shell program in workflow logs.
+- It emits progress notices before submission, on skip, and on success.
+- In `output: json` mode, it prints a short success summary and still exposes structured outputs for downstream steps.
+- In `output: raw` mode, it streams the CLI's human-readable output directly.
+
 ## Development
 
 Validate the action metadata with `actionlint`:
