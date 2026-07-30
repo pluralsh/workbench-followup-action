@@ -64,4 +64,4 @@ runs:
         DEFER: ${{ inputs.defer }}
         OUTPUT: ${{ inputs.output }}
         SKIP_MISSING: ${{ inputs.skip-missing }}
-      run: "$GITHUB_ACTION_PATH/entrypoint.sh"
+      run: bash "$GITHUB_ACTION_PATH/entrypoint.sh"
