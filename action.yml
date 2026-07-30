@@ -9,12 +9,6 @@ inputs:
   prompt:
     description: Follow-up prompt to send to the Workbench.
     required: true
-  console-token:
-    description: Plural Console authentication token. Defaults to PLURAL_CONSOLE_TOKEN.
-    required: false
-  console-url:
-    description: Plural Console URL. Defaults to PLURAL_CONSOLE_URL.
-    required: false
   url:
     description: Pull request URL. Defaults to github.event.pull_request.html_url unless commit is set, then falls back to CLI inference.
     required: false
@@ -32,15 +26,14 @@ inputs:
     description: Duration to defer the follow-up, such as 30s, 5m, or 2h.
     required: false
     default: 0s
+  output:
+    description: CLI output format (raw or json). Structured action outputs are only available with json.
+    required: false
+    default: json
   skip-missing:
     description: Exit successfully when the pull request has no associated Workbench job.
     required: false
     default: "false"
-  plural-cli-version:
-    description: Plural CLI version, tag, or commit to install.
-    required: false
-    default: 74475d9730fb3d179ff01324858b3e27d96e3ed9
-
 outputs:
   prompt-id:
     description: ID of the created Workbench follow-up prompt.
@@ -58,24 +51,10 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Set up Go
-      uses: actions/setup-go@v5
-      with:
-        go-version: "1.26.5"
-        cache: false
-
-    - name: Install Plural CLI
-      shell: bash
-      env:
-        PLURAL_CLI_VERSION: ${{ inputs.plural-cli-version }}
-      run: go install github.com/pluralsh/plural-cli/cmd/plural@"$PLURAL_CLI_VERSION"
-
     - name: Send Workbench follow-up
       id: follow-up
       shell: bash
       env:
-        INPUT_CONSOLE_TOKEN: ${{ inputs.console-token }}
-        INPUT_CONSOLE_URL: ${{ inputs.console-url }}
         PROMPT: ${{ inputs.prompt }}
         INPUT_URL: ${{ inputs.url }}
         EVENT_PULL_REQUEST_URL: ${{ github.event.pull_request.html_url }}
@@ -83,12 +62,10 @@ runs:
         BASE_URL: ${{ inputs.base-url }}
         PROVIDER: ${{ inputs.provider }}
         DEFER: ${{ inputs.defer }}
+        OUTPUT: ${{ inputs.output }}
         SKIP_MISSING: ${{ inputs.skip-missing }}
       run: |
         set -euo pipefail
-
-        export PLURAL_CONSOLE_TOKEN="${INPUT_CONSOLE_TOKEN:-${PLURAL_CONSOLE_TOKEN:-}}"
-        export PLURAL_CONSOLE_URL="${INPUT_CONSOLE_URL:-${PLURAL_CONSOLE_URL:-}}"
 
         PULL_REQUEST_URL="$INPUT_URL"
         if [[ -z "$PULL_REQUEST_URL" && -z "$COMMIT" ]]; then
@@ -96,10 +73,11 @@ runs:
         fi
 
         [[ -n "${PROMPT//[[:space:]]/}" ]] || { echo "::error::prompt is required" >&2; exit 1; }
-        [[ -n "$PLURAL_CONSOLE_TOKEN" ]] || { echo "::error::console-token or PLURAL_CONSOLE_TOKEN is required" >&2; exit 1; }
-        [[ -n "$PLURAL_CONSOLE_URL" ]] || { echo "::error::console-url or PLURAL_CONSOLE_URL is required" >&2; exit 1; }
+        [[ -n "${PLURAL_CONSOLE_TOKEN:-}" ]] || { echo "::error::PLURAL_CONSOLE_TOKEN is required; run pluralsh/setup-plural first" >&2; exit 1; }
+        [[ -n "${PLURAL_CONSOLE_URL:-}" ]] || { echo "::error::PLURAL_CONSOLE_URL is required; run pluralsh/setup-plural first" >&2; exit 1; }
         [[ -z "$PULL_REQUEST_URL" || -z "$COMMIT" ]] || { echo "::error::pull-request-url and commit cannot be used together" >&2; exit 1; }
         [[ "$PROVIDER" == "auto" || "$PROVIDER" == "github" || "$PROVIDER" == "gitlab" || "$PROVIDER" == "bitbucket" ]] || { echo "::error::provider must be auto, github, gitlab, or bitbucket" >&2; exit 1; }
+        [[ "$OUTPUT" == "raw" || "$OUTPUT" == "json" ]] || { echo "::error::output must be raw or json" >&2; exit 1; }
         [[ "$SKIP_MISSING" == "true" || "$SKIP_MISSING" == "false" ]] || { echo "::error::skip-missing must be true or false" >&2; exit 1; }
 
         args=(
@@ -107,12 +85,17 @@ runs:
           --prompt "$PROMPT"
           --provider "$PROVIDER"
           --defer "$DEFER"
-          --output json
+          --output "$OUTPUT"
         )
         [[ -n "$PULL_REQUEST_URL" ]] && args+=(--url "$PULL_REQUEST_URL")
         [[ -n "$COMMIT" ]] && args+=(--commit "$COMMIT")
         [[ -n "$BASE_URL" ]] && args+=(--base-url "$BASE_URL")
         [[ "$SKIP_MISSING" == "true" ]] && args+=(--skip-missing)
+
+        if [[ "$OUTPUT" == "raw" ]]; then
+          plural "${args[@]}"
+          exit 0
+        fi
 
         result="$(plural "${args[@]}")"
         jq -e 'type == "object"' >/dev/null <<< "$result" || { echo "::error::plural returned an invalid JSON response" >&2; exit 1; }
