@@ -1,0 +1,123 @@
+name: Plural Workbench Follow-up
+description: Send a follow-up prompt to the Plural Workbench associated with a pull request.
+author: Plural
+branding:
+  icon: message-circle
+  color: purple
+
+inputs:
+  prompt:
+    description: Follow-up prompt to send to the Workbench.
+    required: true
+  console-token:
+    description: Plural Console authentication token. Defaults to PLURAL_CONSOLE_TOKEN.
+    required: false
+  console-url:
+    description: Plural Console URL. Defaults to PLURAL_CONSOLE_URL.
+    required: false
+  url:
+    description: Pull request URL. Defaults to github.event.pull_request.html_url unless commit is set, then falls back to CLI inference.
+    required: false
+  commit:
+    description: Commit or ref whose subject identifies the pull request. Defaults to HEAD when URL is omitted.
+    required: false
+  base-url:
+    description: Repository web URL used to construct the pull request URL.
+    required: false
+  provider:
+    description: Source control provider used for inference (auto, github, gitlab, or bitbucket).
+    required: false
+    default: auto
+  defer:
+    description: Duration to defer the follow-up, such as 30s, 5m, or 2h.
+    required: false
+    default: 0s
+  skip-missing:
+    description: Exit successfully when the pull request has no associated Workbench job.
+    required: false
+    default: "false"
+  plural-cli-version:
+    description: Plural CLI version, tag, or commit to install.
+    required: false
+    default: 74475d9730fb3d179ff01324858b3e27d96e3ed9
+
+outputs:
+  prompt-id:
+    description: ID of the created Workbench follow-up prompt.
+    value: ${{ steps.follow-up.outputs.prompt-id }}
+  pull-request-url:
+    description: Pull request URL used for the follow-up.
+    value: ${{ steps.follow-up.outputs.pull-request-url }}
+  workbench-job-url:
+    description: URL of the associated Workbench job.
+    value: ${{ steps.follow-up.outputs.workbench-job-url }}
+  skipped:
+    description: Whether the follow-up was skipped because no Workbench job was found.
+    value: ${{ steps.follow-up.outputs.skipped }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.26.5"
+        cache: false
+
+    - name: Install Plural CLI
+      shell: bash
+      env:
+        PLURAL_CLI_VERSION: ${{ inputs.plural-cli-version }}
+      run: go install github.com/pluralsh/plural-cli/cmd/plural@"$PLURAL_CLI_VERSION"
+
+    - name: Send Workbench follow-up
+      id: follow-up
+      shell: bash
+      env:
+        INPUT_CONSOLE_TOKEN: ${{ inputs.console-token }}
+        INPUT_CONSOLE_URL: ${{ inputs.console-url }}
+        PROMPT: ${{ inputs.prompt }}
+        INPUT_URL: ${{ inputs.url }}
+        EVENT_PULL_REQUEST_URL: ${{ github.event.pull_request.html_url }}
+        COMMIT: ${{ inputs.commit }}
+        BASE_URL: ${{ inputs.base-url }}
+        PROVIDER: ${{ inputs.provider }}
+        DEFER: ${{ inputs.defer }}
+        SKIP_MISSING: ${{ inputs.skip-missing }}
+      run: |
+        set -euo pipefail
+
+        export PLURAL_CONSOLE_TOKEN="${INPUT_CONSOLE_TOKEN:-${PLURAL_CONSOLE_TOKEN:-}}"
+        export PLURAL_CONSOLE_URL="${INPUT_CONSOLE_URL:-${PLURAL_CONSOLE_URL:-}}"
+
+        PULL_REQUEST_URL="$INPUT_URL"
+        if [[ -z "$PULL_REQUEST_URL" && -z "$COMMIT" ]]; then
+          PULL_REQUEST_URL="$EVENT_PULL_REQUEST_URL"
+        fi
+
+        [[ -n "${PROMPT//[[:space:]]/}" ]] || { echo "::error::prompt is required" >&2; exit 1; }
+        [[ -n "$PLURAL_CONSOLE_TOKEN" ]] || { echo "::error::console-token or PLURAL_CONSOLE_TOKEN is required" >&2; exit 1; }
+        [[ -n "$PLURAL_CONSOLE_URL" ]] || { echo "::error::console-url or PLURAL_CONSOLE_URL is required" >&2; exit 1; }
+        [[ -z "$PULL_REQUEST_URL" || -z "$COMMIT" ]] || { echo "::error::pull-request-url and commit cannot be used together" >&2; exit 1; }
+        [[ "$PROVIDER" == "auto" || "$PROVIDER" == "github" || "$PROVIDER" == "gitlab" || "$PROVIDER" == "bitbucket" ]] || { echo "::error::provider must be auto, github, gitlab, or bitbucket" >&2; exit 1; }
+        [[ "$SKIP_MISSING" == "true" || "$SKIP_MISSING" == "false" ]] || { echo "::error::skip-missing must be true or false" >&2; exit 1; }
+
+        args=(
+          workbenches pr-followup
+          --prompt "$PROMPT"
+          --provider "$PROVIDER"
+          --defer "$DEFER"
+          --output json
+        )
+        [[ -n "$PULL_REQUEST_URL" ]] && args+=(--url "$PULL_REQUEST_URL")
+        [[ -n "$COMMIT" ]] && args+=(--commit "$COMMIT")
+        [[ -n "$BASE_URL" ]] && args+=(--base-url "$BASE_URL")
+        [[ "$SKIP_MISSING" == "true" ]] && args+=(--skip-missing)
+
+        result="$(plural "${args[@]}")"
+        jq -e 'type == "object"' >/dev/null <<< "$result" || { echo "::error::plural returned an invalid JSON response" >&2; exit 1; }
+
+        echo "prompt-id=$(jq -r '.promptId // empty' <<< "$result")" >> "$GITHUB_OUTPUT"
+        echo "pull-request-url=$(jq -r '.pullRequestUrl // empty' <<< "$result")" >> "$GITHUB_OUTPUT"
+        echo "workbench-job-url=$(jq -r '.workbenchJobUrl // empty' <<< "$result")" >> "$GITHUB_OUTPUT"
+        echo "skipped=$(jq -r '.skipped // false' <<< "$result")" >> "$GITHUB_OUTPUT"
